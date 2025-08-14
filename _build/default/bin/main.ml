@@ -1,4 +1,3 @@
-(*编译器主程序-希冀平台测试使用，标准输入输出代码*)
 open Toyc
 open Printf
 
@@ -12,18 +11,17 @@ let read_stdin () =
   Buffer.contents buf
 
 let () =
-  let enable_opt = ref true in  (* 默认启用优化 *)
+  (* 默认启用优化，可用 -noopt 关闭 *)
+  let enable_opt = ref true in
   let argc = Array.length Sys.argv in
   if argc > 2 then begin
-    prerr_endline "用法: toycproj [-no-opt]";  (* 改为-no-opt参数 *)
+    prerr_endline "用法: toycproj [-noopt]";
     exit 1
   end;
   if argc = 2 then begin
-    if Sys.argv.(1) = "-no-opt" then enable_opt := false  (* 禁用优化 *)
-    else begin
-      prerr_endline "未知参数";
-      exit 1
-    end
+    match Sys.argv.(1) with
+    | "-noopt" -> enable_opt := false
+    | _ -> prerr_endline "未知参数"; exit 1
   end;
 
   try
@@ -42,7 +40,7 @@ let () =
 
     Semantic.check_program ast;
 
-    (* AST优化 - 默认启用，可通过-no-opt禁用 *)
+    (* 根据命令行参数决定是否启用优化；默认启用 *)
     let final_ast = 
       if !enable_opt then
         Ast_optimizer.optimize_program ast
@@ -50,7 +48,7 @@ let () =
         ast
     in
 
-    (* 直接输出到 stdout *)
+    (* 输出到 stdout *)
     Codegen.gen_program stdout final_ast;
 
   with

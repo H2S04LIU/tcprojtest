@@ -1,5 +1,5 @@
 open Ast
-open Ast_optimizer  (* 添加这行 *)
+
 (* RISC-V32 寄存器名 *)
 let zero = "zero"
 let sp = "sp"
@@ -57,6 +57,18 @@ let rec calc_stack_size env = function
       calc_stack_size env s
   | _ -> env
 
+(* 判定简单表达式：可在寄存器直接装载 *)
+let is_simple_expr = function
+  | Num _ | Var _ -> true
+  | _ -> false
+
+let gen_load_simple env oc reg = function
+  | Num n -> Printf.fprintf oc "  li %s, %d\n" reg n
+  | Var id ->
+      let offset = find_var env id in
+      Printf.fprintf oc "  lw %s, %d(%s)\n" reg offset fp
+  | _ -> failwith "non-simple expr in gen_load_simple"
+
 (* 生成表达式代码，结果放 t0 *)
 let rec gen_expr env oc = function
   | Num n -> Printf.fprintf oc "  li %s, %d\n" t0 n
@@ -75,7 +87,7 @@ let rec gen_expr env oc = function
       gen_expr env oc e1;
       Printf.fprintf oc "  beqz %s, %s\n" t0 false_label;
       gen_expr env oc e2;
-      Printf.fprintf oc "  mv %s, %s\n" t0 t0;
+      (* e2 的结果已在 t0 *)
       Printf.fprintf oc "  j %s\n" end_label;
       Printf.fprintf oc "%s:\n  li %s, 0\n%s:\n" false_label t0 end_label
   | Binop (e1, Or, e2) ->
@@ -84,29 +96,83 @@ let rec gen_expr env oc = function
       gen_expr env oc e1;
       Printf.fprintf oc "  bnez %s, %s\n" t0 true_label;
       gen_expr env oc e2;
-      Printf.fprintf oc "  mv %s, %s\n" t0 t0;
+      (* e2 的结果已在 t0 *)
       Printf.fprintf oc "  j %s\n" end_label;
       Printf.fprintf oc "%s:\n  li %s, 1\n%s:\n" true_label t0 end_label
   | Binop (e1, op, e2) ->
-      gen_expr env oc e1;
-      Printf.fprintf oc "  addi sp, sp, -4\n";
-      Printf.fprintf oc "  sw %s, 0(sp)\n" t0;
-      gen_expr env oc e2;
-      Printf.fprintf oc "  lw %s, 0(sp)\n" t1;
-      Printf.fprintf oc "  addi sp, sp, 4\n";
-      (match op with
-      | Add -> Printf.fprintf oc "  add %s, %s, %s\n" t0 t1 t0
-      | Sub -> Printf.fprintf oc "  sub %s, %s, %s\n" t0 t1 t0
-      | Mul -> Printf.fprintf oc "  mul %s, %s, %s\n" t0 t1 t0
-      | Div -> Printf.fprintf oc "  div %s, %s, %s\n" t0 t1 t0
-      | Mod -> Printf.fprintf oc "  rem %s, %s, %s\n" t0 t1 t0
-      | Lt -> Printf.fprintf oc "  slt %s, %s, %s\n" t0 t1 t0
-      | Gt -> Printf.fprintf oc "  sgt %s, %s, %s\n" t0 t1 t0
-      | Le -> Printf.fprintf oc "  sgt %s, %s, %s\n  xori %s, %s, 1\n" t0 t1 t0 t0 t0
-      | Ge -> Printf.fprintf oc "  slt %s, %s, %s\n  xori %s, %s, 1\n" t0 t1 t0 t0 t0
-      | Eq -> Printf.fprintf oc "  xor %s, %s, %s\n  seqz %s, %s\n" t0 t1 t0 t0 t0
-      | Ne -> Printf.fprintf oc "  xor %s, %s, %s\n  snez %s, %s\n" t0 t1 t0 t0 t0
-      | _ -> ())
+      (* 优化：若两侧或一侧为简单表达式（常量/变量），避免使用栈 *)
+      if is_simple_expr e1 && is_simple_expr e2 then begin
+        gen_load_simple env oc t1 e1;
+        gen_load_simple env oc t0 e2;
+        (match op with
+        | Add -> Printf.fprintf oc "  add %s, %s, %s\n" t0 t1 t0
+        | Sub -> Printf.fprintf oc "  sub %s, %s, %s\n" t0 t1 t0
+        | Mul -> Printf.fprintf oc "  mul %s, %s, %s\n" t0 t1 t0
+        | Div -> Printf.fprintf oc "  div %s, %s, %s\n" t0 t1 t0
+        | Mod -> Printf.fprintf oc "  rem %s, %s, %s\n" t0 t1 t0
+        | Lt -> Printf.fprintf oc "  slt %s, %s, %s\n" t0 t1 t0
+        | Gt -> Printf.fprintf oc "  sgt %s, %s, %s\n" t0 t1 t0
+        | Le -> Printf.fprintf oc "  sgt %s, %s, %s\n  xori %s, %s, 1\n" t0 t1 t0 t0 t0
+        | Ge -> Printf.fprintf oc "  slt %s, %s, %s\n  xori %s, %s, 1\n" t0 t1 t0 t0 t0
+        | Eq -> Printf.fprintf oc "  xor %s, %s, %s\n  seqz %s, %s\n" t0 t1 t0 t0 t0
+        | Ne -> Printf.fprintf oc "  xor %s, %s, %s\n  snez %s, %s\n" t0 t1 t0 t0 t0
+        | _ -> ())
+      end else if (not (is_simple_expr e1)) && is_simple_expr e2 then begin
+        (* e1 复杂，e2 简单：先算 e1 到 t0，再装载 e2 到 t1，无栈开销 *)
+        gen_expr env oc e1;
+        gen_load_simple env oc t1 e2;
+        (match op with
+        | Add -> Printf.fprintf oc "  add %s, %s, %s\n" t0 t0 t1
+        | Sub -> Printf.fprintf oc "  sub %s, %s, %s\n" t0 t0 t1
+        | Mul -> Printf.fprintf oc "  mul %s, %s, %s\n" t0 t0 t1
+        | Div -> Printf.fprintf oc "  div %s, %s, %s\n" t0 t0 t1
+        | Mod -> Printf.fprintf oc "  rem %s, %s, %s\n" t0 t0 t1
+        | Lt -> Printf.fprintf oc "  slt %s, %s, %s\n" t0 t0 t1
+        | Gt -> Printf.fprintf oc "  sgt %s, %s, %s\n" t0 t0 t1
+        | Le -> Printf.fprintf oc "  sgt %s, %s, %s\n  xori %s, %s, 1\n" t0 t0 t1 t0 t0
+        | Ge -> Printf.fprintf oc "  slt %s, %s, %s\n  xori %s, %s, 1\n" t0 t0 t1 t0 t0
+        | Eq -> Printf.fprintf oc "  xor %s, %s, %s\n  seqz %s, %s\n" t0 t0 t1 t0 t0
+        | Ne -> Printf.fprintf oc "  xor %s, %s, %s\n  snez %s, %s\n" t0 t0 t1 t0 t0
+        | _ -> ())
+      end else if is_simple_expr e1 && (not (is_simple_expr e2)) then begin
+        (* e1 简单，e2 复杂：先算 e2 到 t0，再装载 e1 到 t1，无栈开销 *)
+        gen_expr env oc e2;
+        gen_load_simple env oc t1 e1;
+        (match op with
+        | Add -> Printf.fprintf oc "  add %s, %s, %s\n" t0 t1 t0
+        | Sub -> Printf.fprintf oc "  sub %s, %s, %s\n" t0 t1 t0
+        | Mul -> Printf.fprintf oc "  mul %s, %s, %s\n" t0 t1 t0
+        | Div -> Printf.fprintf oc "  div %s, %s, %s\n" t0 t1 t0
+        | Mod -> Printf.fprintf oc "  rem %s, %s, %s\n" t0 t1 t0
+        | Lt -> Printf.fprintf oc "  slt %s, %s, %s\n" t0 t1 t0
+        | Gt -> Printf.fprintf oc "  sgt %s, %s, %s\n" t0 t1 t0
+        | Le -> Printf.fprintf oc "  sgt %s, %s, %s\n  xori %s, %s, 1\n" t0 t1 t0 t0 t0
+        | Ge -> Printf.fprintf oc "  slt %s, %s, %s\n  xori %s, %s, 1\n" t0 t1 t0 t0 t0
+        | Eq -> Printf.fprintf oc "  xor %s, %s, %s\n  seqz %s, %s\n" t0 t1 t0 t0 t0
+        | Ne -> Printf.fprintf oc "  xor %s, %s, %s\n  snez %s, %s\n" t0 t1 t0 t0 t0
+        | _ -> ())
+      end else begin
+        (* 两侧都复杂：退化为原先的栈方案 *)
+        gen_expr env oc e1;
+        Printf.fprintf oc "  addi sp, sp, -4\n";
+        Printf.fprintf oc "  sw %s, 0(sp)\n" t0;
+        gen_expr env oc e2;
+        Printf.fprintf oc "  lw %s, 0(sp)\n" t1;
+        Printf.fprintf oc "  addi sp, sp, 4\n";
+        (match op with
+        | Add -> Printf.fprintf oc "  add %s, %s, %s\n" t0 t1 t0
+        | Sub -> Printf.fprintf oc "  sub %s, %s, %s\n" t0 t1 t0
+        | Mul -> Printf.fprintf oc "  mul %s, %s, %s\n" t0 t1 t0
+        | Div -> Printf.fprintf oc "  div %s, %s, %s\n" t0 t1 t0
+        | Mod -> Printf.fprintf oc "  rem %s, %s, %s\n" t0 t1 t0
+        | Lt -> Printf.fprintf oc "  slt %s, %s, %s\n" t0 t1 t0
+        | Gt -> Printf.fprintf oc "  sgt %s, %s, %s\n" t0 t1 t0
+        | Le -> Printf.fprintf oc "  sgt %s, %s, %s\n  xori %s, %s, 1\n" t0 t1 t0 t0 t0
+        | Ge -> Printf.fprintf oc "  slt %s, %s, %s\n  xori %s, %s, 1\n" t0 t1 t0 t0 t0
+        | Eq -> Printf.fprintf oc "  xor %s, %s, %s\n  seqz %s, %s\n" t0 t1 t0 t0 t0
+        | Ne -> Printf.fprintf oc "  xor %s, %s, %s\n  snez %s, %s\n" t0 t1 t0 t0 t0
+        | _ -> ())
+      end
   | Call (fname, args) ->
       (* 先为栈参数分配空间 *)
       let stack_args = List.length args - 8 in
@@ -191,6 +257,22 @@ let rec gen_stmt env oc ret_label break_label cont_label = function
       gen_expr env oc e;
       Printf.fprintf oc "  mv %s, %s\n  j %s\n" a0 t0 ret_label; env
 
+(* 扫描函数体是否含调用，用于叶函数优化 *)
+let rec stmt_has_call = function
+  | Block ss -> List.exists stmt_has_call ss
+  | Expr (Call _) -> true
+  | VarDecl (_, _, e) -> expr_has_call e
+  | Assign (_, e) -> expr_has_call e
+  | If (e, s1, so) -> expr_has_call e || stmt_has_call s1 || (match so with Some s -> stmt_has_call s | None -> false)
+  | While (e, s) -> expr_has_call e || stmt_has_call s
+  | Return (Some e) -> expr_has_call e
+  | _ -> false
+and expr_has_call = function
+  | Call _ -> true
+  | Binop (l, _, r) -> expr_has_call l || expr_has_call r
+  | Neg e | Not e -> expr_has_call e
+  | _ -> false
+
 (* 生成函数代码 *)
 let gen_function oc func =
   let ret_label = func.name ^ "_ret" in
@@ -207,11 +289,13 @@ let gen_function oc func =
   (* 为前8个参数额外分配空间 *)
   let param_space = min (List.length func.params) 8 * 4 in
   let total_stack = 16 + stack_size + param_space in
+
+  let has_call = List.exists stmt_has_call func.body in
   
   (* 生成函数标签和序言 *)
   Printf.fprintf oc "\n%s:\n" func.name;
   Printf.fprintf oc "  addi %s, %s, -%d\n" sp sp total_stack;
-  Printf.fprintf oc "  sw %s, %d(%s)\n" ra (total_stack-4) sp;
+  (if has_call then Printf.fprintf oc "  sw %s, %d(%s)\n" ra (total_stack-4) sp);
   Printf.fprintf oc "  sw %s, %d(%s)\n" fp (total_stack-8) sp;
   Printf.fprintf oc "  addi %s, %s, %d\n" fp sp total_stack;
   
@@ -226,13 +310,13 @@ let gen_function oc func =
   
   (* 返回标签和尾声 *)
   Printf.fprintf oc "%s:\n" ret_label;
-  Printf.fprintf oc "  lw %s, %d(%s)\n" ra (total_stack-4) sp;
+  (if has_call then Printf.fprintf oc "  lw %s, %d(%s)\n" ra (total_stack-4) sp);
   Printf.fprintf oc "  lw %s, %d(%s)\n" fp (total_stack-8) sp;
   Printf.fprintf oc "  addi %s, %s, %d\n" sp sp total_stack;
   Printf.fprintf oc "  ret\n"
 
 (* 生成整个程序 *)
 let gen_program oc program =
-  let optimized_program = optimize_program program in  (* 添加这行 *)
+ (* 添加这行 *)
   Printf.fprintf oc ".text\n  .globl main\n";
-  List.iter (gen_function oc) optimized_program  (* 使用优化后的程序 *)
+  List.iter (gen_function oc) program  (* 使用优化后的程序 *)

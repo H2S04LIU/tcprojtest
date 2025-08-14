@@ -34,8 +34,8 @@ program:
   | function_def_list EOF { $1 }
 
 function_def_list:
-  | {[]}
-  | function_def_list function_def { $1 @ [$2] }
+  | { [] }
+  | function_def function_def_list { $1 :: $2 }
 
 function_def:
   | function_type ID LPAREN params RPAREN body {
@@ -47,9 +47,12 @@ function_type:
   | INT {Int}
 
 params:
-  | {[]}
-  | param {[$1]}
-  | params COMMA param { $1 @ [$3] }
+  | { [] }
+  | param_list { $1 }
+
+param_list:
+  | param { [$1] }
+  | param COMMA param_list { $1 :: $3 }
 
 param:
   | INT ID {{ptype = Int; pname = $2}}
@@ -58,8 +61,8 @@ body:
   | LBRACE stmt_list RBRACE { $2 }
   
 stmt_list:
-  | {[]}
-  | stmt_list stmt { $1 @ [$2] }
+  | { [] }
+  | stmt stmt_list { $1 :: $2 }
 
 stmt:
   | SEMI { Block [] }
@@ -74,7 +77,7 @@ stmt:
   | IF LPAREN expr RPAREN stmt ELSE stmt { If ($3, $5, Some $7) }
   | WHILE LPAREN expr RPAREN stmt { While ($3, $5) }
   | BREAK SEMI { Break }
-  | CONTINUE SEMI { Continue }              
+  | CONTINUE SEMI { Continue }             
 
 expr:
   | NUM { Num $1 }
@@ -86,6 +89,7 @@ expr:
   // | ADD expr %prec UMINUS { Neg $2 }
   | NOT expr { Not $2 }
   // | expr binop expr { Binop ($1, $2, $3) }
+  // | ID LPAREN args RPAREN { Call ($1, $3) }
   | expr ADD expr { Binop ($1, Add, $3) }
   | expr SUB expr { Binop ($1, Sub, $3) }
   | expr MUL expr { Binop ($1, Mul, $3) }
@@ -102,9 +106,12 @@ expr:
   | ID LPAREN args RPAREN { Call ($1, $3) }
 
 args:
-  | {[]}
-  | expr {[$1]}
-  | args COMMA expr { $1 @ [$3] }
+  | { [] }
+  | arg_list { $1 }
+
+arg_list:
+  | expr { [$1] }
+  | expr COMMA arg_list { $1 :: $3 }
 
 // binop:
 //   | ADD { Add }

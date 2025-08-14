@@ -1,1 +1,1 @@
-lib/ast_optimizer.ml: Ast Hashtbl List Printf
+lib/ast_optimizer.ml: Ast Hashtbl List Option Printf

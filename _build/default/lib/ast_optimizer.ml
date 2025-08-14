@@ -154,13 +154,11 @@ let eliminate_common_subexpr expr =
 (* 5. 死代码消除 *)
 let rec eliminate_dead_code_stmt = function
   | Block stmts -> Block (eliminate_dead_stmts stmts)
-  | If (Num 0, _, else_opt) -> 
-      (* if (0) 条件永远为假 *)
-      (match else_opt with 
-       | Some s -> eliminate_dead_code_stmt s 
+  | If (Num 0, _, else_opt) ->
+      (match else_opt with
+       | Some s -> eliminate_dead_code_stmt s
        | None -> Block [])
-  | If (Num n, then_stmt, _) when n <> 0 -> 
-      (* if (非零常量) 条件永远为真 *)
+  | If (Num n, then_stmt, _) when n <> 0 ->
       eliminate_dead_code_stmt then_stmt
   | If (cond, then_stmt, else_opt) ->
       let cond' = optimize_expr cond in
@@ -170,7 +168,7 @@ let rec eliminate_dead_code_stmt = function
         | None -> None
       in
       If (cond', then_stmt', else_opt')
-  | While (Num 0, _) -> Block [] (* while(0) 永远不执行 *)
+  | While (Num 0, _) -> Block []
   | While (cond, body) ->
       let cond' = optimize_expr cond in
       let body' = eliminate_dead_code_stmt body in
@@ -185,10 +183,10 @@ let rec eliminate_dead_code_stmt = function
 
 and eliminate_dead_stmts = function
   | [] -> []
-  | Return e :: _ -> [Return e] (* return后的代码不可达 *)
-  | Break :: _ -> [Break] (* break后的代码不可达 *)
-  | Continue :: _ -> [Continue] (* continue后的代码不可达 *)
-  | stmt :: rest -> 
+  | Return _ as r :: _ -> [r]
+  | Break :: _ -> [Break]
+  | Continue :: _ -> [Continue]
+  | stmt :: rest ->
       eliminate_dead_code_stmt stmt :: eliminate_dead_stmts rest
 
 and optimize_expr expr =
@@ -198,103 +196,48 @@ and optimize_expr expr =
   |> strength_reduction
   |> eliminate_common_subexpr
 
-(* 6. 控制流简化 *)
+(* 6. 控制流简化（语义安全版） *)
 let rec simplify_control_flow = function
-  | Block [] -> Block []
-  | Block [stmt] -> simplify_control_flow stmt
-  | Block stmts -> 
-      let simplified = List.map simplify_control_flow stmts in
-      Block (flatten_blocks simplified)
-  | If (_, Block [], None) -> Block [] (* 空的if分支 *)
-  | If (cond, then_stmt, else_opt) ->
-      let then_stmt' = simplify_control_flow then_stmt in
-      let else_opt' = match else_opt with
-        | Some s -> Some (simplify_control_flow s)
-        | None -> None
-      in
-      (match then_stmt', else_opt' with
-       | Block [], None -> Block []
-       | Block [], Some else_stmt -> If (Not cond, else_stmt, None)
-       | _ -> If (cond, then_stmt', else_opt'))
-  | While (_, Block []) -> Block [] (* 空循环体 *)
-  | While (cond, body) -> While (cond, simplify_control_flow body)
+  | Block stmts ->
+      Block (List.map simplify_control_flow stmts)
+  | If (cond, Block [], None) ->
+      (* if (cond) {} 等价于仅求值cond以保留副作用 *)
+      Expr cond
+  | If (cond, then_stmt, Some else_stmt) ->
+      let then' = simplify_control_flow then_stmt in
+      let else' = simplify_control_flow else_stmt in
+      (match then' with
+       | Block [] -> If (Not cond, else', None)
+       | _ -> If (cond, then', Some else'))
+  | If (cond, then_stmt, None) ->
+      If (cond, simplify_control_flow then_stmt, None)
+  | While (cond, body) ->
+      (* 不删除空体循环，因为可能依赖条件副作用或形成忙等 *)
+      While (cond, simplify_control_flow body)
   | stmt -> stmt
 
-and flatten_blocks = function
-  | Block inner_stmts :: rest -> inner_stmts @ flatten_blocks rest
-  | stmt :: rest -> stmt :: flatten_blocks rest
-  | [] -> []
-
-(* 7. 简单的常量传播 *)
-type const_env = (string * expr) list
-
-let rec propagate_constants env = function
-  | Var id -> 
-      (try List.assoc id env with Not_found -> Var id)
-  | Binop (e1, op, e2) -> 
-      let e1' = propagate_constants env e1 in
-      let e2' = propagate_constants env e2 in
-      Binop (e1', op, e2')
-  | Neg e -> Neg (propagate_constants env e)
-  | Not e -> Not (propagate_constants env e)
-  | Call (fname, args) -> 
-      Call (fname, List.map (propagate_constants env) args)
-  | expr -> expr
-
-let rec optimize_stmt_with_env env = function
-  | VarDecl (typ, name, (Num _ as const_expr)) -> 
-      let new_env = (name, const_expr) :: env in
-      (VarDecl (typ, name, const_expr), new_env)
-  | VarDecl (typ, name, expr) ->
-      let expr' = propagate_constants env expr in
-      let optimized_expr = optimize_expr expr' in
-      let new_env = match optimized_expr with
-        | Num _ as const -> (name, const) :: env
-        | _ -> env
-      in
-      (VarDecl (typ, name, optimized_expr), new_env)
-  | Assign (name, (Num _ as const_expr)) -> 
-      let new_env = (name, const_expr) :: (List.remove_assoc name env) in
-      (Assign (name, const_expr), new_env)
-  | Assign (name, expr) ->
-      let expr' = propagate_constants env expr in
-      let optimized_expr = optimize_expr expr' in
-      let new_env = match optimized_expr with
-        | Num _ as const -> (name, const) :: (List.remove_assoc name env)
-        | _ -> List.remove_assoc name env
-      in
-      (Assign (name, optimized_expr), new_env)
-  | Expr e -> (Expr (optimize_expr (propagate_constants env e)), env)
-  | If (cond, then_stmt, else_opt) ->
-      let cond' = optimize_expr (propagate_constants env cond) in
-      let then_stmt', _ = optimize_stmt_with_env env then_stmt in
-      let else_opt' = match else_opt with
-        | Some s -> let s', _ = optimize_stmt_with_env env s in Some s'
-        | None -> None
-      in
-      (If (cond', then_stmt', else_opt'), env)
+(* 7. 语句结构内联优化（仅表达式级，保持作用域） *)
+let rec optimize_stmt_expr_only = function
+  | Block stmts -> Block (List.map optimize_stmt_expr_only stmts)
+  | Expr e -> Expr (optimize_expr e)
+  | VarDecl (typ, name, e) -> VarDecl (typ, name, optimize_expr e)
+  | Assign (name, e) -> Assign (name, optimize_expr e)
+  | If (cond, t, eo) ->
+      let cond' = optimize_expr cond in
+      let t' = optimize_stmt_expr_only t in
+      let eo' = Option.map optimize_stmt_expr_only eo in
+      If (cond', t', eo')
   | While (cond, body) ->
-      let cond' = optimize_expr (propagate_constants env cond) in
-      let body', _ = optimize_stmt_with_env env body in
-      (While (cond', body'), env)
-  | Return (Some e) -> 
-      (Return (Some (optimize_expr (propagate_constants env e))), env)
-  | Block stmts ->
-      let optimized_stmts, _ = optimize_stmts_with_env env stmts in
-      (Block optimized_stmts, env)
-  | stmt -> (stmt, env)
+      let cond' = optimize_expr cond in
+      let body' = optimize_stmt_expr_only body in
+      While (cond', body')
+  | Return (Some e) -> Return (Some (optimize_expr e))
+  | stmt -> stmt
 
-and optimize_stmts_with_env env = function
-  | [] -> ([], env)
-  | stmt :: rest ->
-      let stmt', new_env = optimize_stmt_with_env env stmt in
-      let rest', final_env = optimize_stmts_with_env new_env rest in
-      (stmt' :: rest', final_env)
-
-(* 8. 主优化函数 *)
+(* 8. 主优化函数：表达式级 -> 常量条件死代码删除 -> 安全控制流简化 *)
 let optimize_stmt stmt =
-  let stmt', _ = optimize_stmt_with_env [] stmt in
-  stmt'
+  stmt
+  |> optimize_stmt_expr_only
   |> eliminate_dead_code_stmt
   |> simplify_control_flow
 

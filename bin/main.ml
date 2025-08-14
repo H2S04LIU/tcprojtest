@@ -4,25 +4,24 @@ open Printf
 let read_stdin () =
   let buf = Buffer.create 4096 in
   (try
-    while true do
-      Buffer.add_channel buf stdin 4096
-    done
-  with End_of_file -> ());
+     while true do
+       Buffer.add_channel buf stdin 4096
+     done
+   with End_of_file -> ());
   Buffer.contents buf
 
 let () =
-  let enable_opt = ref false in
+  (* 默认启用优化，可用 -noopt 关闭 *)
+  let enable_opt = ref true in
   let argc = Array.length Sys.argv in
   if argc > 2 then begin
-    prerr_endline "用法: toycproj [-opt]";
+    prerr_endline "用法: toycproj [-noopt]";
     exit 1
   end;
   if argc = 2 then begin
-    if Sys.argv.(1) = "-opt" then enable_opt := true
-    else begin
-      prerr_endline "未知参数";
-      exit 1
-    end
+    match Sys.argv.(1) with
+    | "-noopt" -> enable_opt := false
+    | _ -> prerr_endline "未知参数"; exit 1
   end;
 
   try
@@ -41,7 +40,7 @@ let () =
 
     Semantic.check_program ast;
 
-    (* 根据命令行参数决定是否启用优化 *)
+    (* 根据命令行参数决定是否启用优化；默认启用 *)
     let final_ast = 
       if !enable_opt then
         Ast_optimizer.optimize_program ast
