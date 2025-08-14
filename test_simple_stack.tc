@@ -1,0 +1,7 @@
+int test_stack(int a1, int a2, int a3, int a4, int a5, int a6, int a7, int a8, int a9) {
+    return a9;  // 只返回第9个参数
+}
+
+int main() {
+    return test_stack(1, 2, 3, 4, 5, 6, 7, 8, 999);  // 应该返回999
+}

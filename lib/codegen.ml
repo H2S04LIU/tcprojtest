@@ -205,8 +205,11 @@ let gen_function oc func =
 
   (* 将栈传递的参数从原始栈位置复制到新的栈帧位置 *)
   for i = 8 to num_params - 1 do
-    let src_offset = total_stack + (i - 8) * 4 in  (* 原始栈位置：sp + total_stack + offset *)
-    let dst_offset = 8 + 32 + (i - 8) * 4 in       (* 新栈帧位置：fp + 40, fp + 44, ... *)
+    (* 栈参数按从左到右压入，第i个参数在栈上的偏移需要反向计算 *)
+    let stack_param_idx = i - 8 in  (* 0, 1, 2, ... *)
+    let total_stack_params = num_params - 8 in
+    let src_offset = total_stack + (total_stack_params - 1 - stack_param_idx) * 4 in
+    let dst_offset = 8 + 32 + stack_param_idx * 4 in       (* 新栈帧位置：fp + 40, fp + 44, ... *)
     Printf.fprintf oc "  lw %s, %d(%s)\n" t0 src_offset sp;
     Printf.fprintf oc "  sw %s, %d(%s)\n" t0 dst_offset fp;
   done;
