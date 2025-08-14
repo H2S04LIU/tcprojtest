@@ -1,6 +1,9 @@
 # toycproj 使用方法
+
 ## main.ml的使用
+
 ### 本地测试时，请将main.ml内容替换为如下，以.tc测试文件输入，输出.s汇编文件
+
     open Toyc
     open Printf
 
@@ -33,11 +36,11 @@
     let lexbuf = Lexing.from_string source in
     lexbuf.lex_curr_p <- { lexbuf.lex_curr_p with pos_fname = input_file };
 
-    let ast = 
-      try Parser.program Lexer.token lexbuf 
+    let ast =
+      try Parser.program Lexer.token lexbuf
       with Parsing.Parse_error ->
         let pos = lexbuf.lex_curr_p in
-        let msg = sprintf "语法错误在 %s:%d:%d" 
+        let msg = sprintf "语法错误在 %s:%d:%d"
             pos.pos_fname pos.pos_lnum (pos.pos_cnum - pos.pos_bol) in
         failwith msg
     in
@@ -55,17 +58,19 @@
     printf "[SUCCESS] 编译成功! 输出文件: %s\n" output_file;
 
     with
-    | Lexer.LexicalError msg -> 
+    | Lexer.LexicalError msg ->
         prerr_endline ("词法错误: " ^ msg); exit 1
     | Semantic.Semantic_error msg ->
         prerr_endline ("语义错误: " ^ msg); exit 1
-    | Failure msg -> 
+    | Failure msg ->
         prerr_endline ("错误: " ^ msg); exit 1
-    | Sys_error msg -> 
+    | Sys_error msg ->
         prerr_endline ("系统错误: " ^ msg); exit 1
-    | e -> 
+    | e ->
         prerr_endline ("未处理的异常: " ^ Printexc.to_string e); exit 1
+
 ### CG平台测试时，请将main.ml内容替换为如下，标准输入输出代码
+
     open Toyc
     open Printf
 
@@ -125,10 +130,18 @@
         prerr_endline ("未处理的异常: " ^ Printexc.to_string e); exit 1
 
 ## 项目的构建与使用
+
     在终端cd项目目录，dune build构建项目，本地测试时使用dune exec toycproj ./test/XXXX.tc，会生成对应的.s文件。
     上传github时，请注意删除_build文件夹以及相应.s文件。
 
+    可以通过test_compiler.sh对指定样例批量进行对拍，但如果涉及大于256的数值会出现错误
+
+    locate_error.py用来定位语法错误位置（原来用于分析parser文件错误的）
+
+    test中以c为后缀的是性能的测试用例，对拍前需改成.tc后缀
+
 ## 现阶段状态
-    目前已经完全实现了编译器的基本内容，在CG平台的功能测试环节中通过14/20个样例测试，需要进一步完善代码通过其他测试，并进行代码优化。
-    仓库现有3个分支，以master分支内容为准，其他两个为过程性分支，请忽略。
-    修改时可自行创建新分支，自己到CG平台上去做测试，确保正确后可以提交pull request合并到master里。
+
+    已通过所有用例（包括性能），待优化，可以参考这个难度选择优化方向，调试阶段遇到的问题记录在record.md中
+
+![1753423969745](image/README/1753423969745.png)

@@ -1,1 +1,1 @@
-lib/codegen.ml: Ast List Printf
+lib/codegen.ml: Ast Ast_optimizer List Printf

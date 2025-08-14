@@ -86,7 +86,6 @@ expr:
   // | ADD expr %prec UMINUS { Neg $2 }
   | NOT expr { Not $2 }
   // | expr binop expr { Binop ($1, $2, $3) }
-  // | ID LPAREN args RPAREN { Call ($1, $3) }
   | expr ADD expr { Binop ($1, Add, $3) }
   | expr SUB expr { Binop ($1, Sub, $3) }
   | expr MUL expr { Binop ($1, Mul, $3) }

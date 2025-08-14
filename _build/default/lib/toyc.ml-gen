@@ -3,6 +3,9 @@
 (** @canonical Toyc.Ast *)
 module Ast = Toyc__Ast
 
+(** @canonical Toyc.Ast_optimizer *)
+module Ast_optimizer = Toyc__Ast_optimizer
+
 (** @canonical Toyc.Codegen *)
 module Codegen = Toyc__Codegen
 

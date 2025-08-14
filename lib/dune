@@ -1,6 +1,6 @@
 (library
  (name toyc)
- (modules ast lexer token parser semantic codegen)
+ (modules ast lexer token parser semantic ast_optimizer codegen)
  (libraries))
 
 (rule 

@@ -7,5 +7,5 @@ bin: [
   "_build/install/default/bin/toycproj"
 ]
 doc: [
-  "_build/install/default/doc/toycproj/README"
+  "_build/install/default/doc/toycproj/README.md"
 ]
